@@ -1,0 +1,6 @@
+{
+  "name": "Grab Xe & Đồ Ăn",
+  "description": "Ứng dụng đặt xe và giao đồ ăn tiện lợi giống Grab với các tính năng chọn điểm đến, đặt xe, gọi món ăn, theo dõi tài xế trực tiếp và lịch sử hoạt động.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
