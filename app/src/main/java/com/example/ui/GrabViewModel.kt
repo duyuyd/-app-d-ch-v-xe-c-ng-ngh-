@@ -115,6 +115,17 @@ class GrabViewModel(application: Application) : AndroidViewModel(application) {
     val savedAddresses: StateFlow<List<SavedAddress>> = repository.allSavedAddresses
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val paymentGateway = PaymentGatewayManager()
+
+    val allPaymentMethods: StateFlow<List<LinkedPaymentMethod>> = repository.allPaymentMethods
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val allTransactions: StateFlow<List<PaymentTransaction>> = repository.allTransactions
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _selectedPaymentMethod = MutableStateFlow<LinkedPaymentMethod?>(null)
+    val selectedPaymentMethod: StateFlow<LinkedPaymentMethod?> = _selectedPaymentMethod.asStateFlow()
+
     // UI state states
     private val _rideState = MutableStateFlow<RideState>(RideState.Idle)
     val rideState: StateFlow<RideState> = _rideState.asStateFlow()
@@ -254,11 +265,136 @@ class GrabViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+
+        // Pre-populate default payment methods if empty
+        viewModelScope.launch {
+            allPaymentMethods.first().let { current ->
+                if (current.isEmpty()) {
+                    repository.insertPaymentMethod(
+                        LinkedPaymentMethod(
+                            type = "E_WALLET",
+                            title = "Ví GrabPay",
+                            subtitle = "Số dư ví khả dụng",
+                            provider = "GRABPAY",
+                            isDefault = true
+                        )
+                    )
+                    repository.insertPaymentMethod(
+                        LinkedPaymentMethod(
+                            type = "CREDIT_CARD",
+                            title = "Visa •••• 4242",
+                            subtitle = "Hết hạn: 12/28 (Stripe)",
+                            provider = "STRIPE_VISA",
+                            lastFour = "4242",
+                            cardHolder = "NGUYEN VAN A",
+                            token = "pm_stripe_tok_4242"
+                        )
+                    )
+                    repository.insertPaymentMethod(
+                        LinkedPaymentMethod(
+                            type = "E_WALLET",
+                            title = "Ví MoMo",
+                            subtitle = "Liên kết: 0988***888",
+                            provider = "MOMO",
+                            lastFour = "8888",
+                            cardHolder = "0988888888",
+                            token = "ewallet_momo_link"
+                        )
+                    )
+                    repository.insertPaymentMethod(
+                        LinkedPaymentMethod(
+                            type = "CASH",
+                            title = "Tiền mặt (COD)",
+                            subtitle = "Thanh toán trực tiếp khi hoàn thành",
+                            provider = "CASH"
+                        )
+                    )
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            allPaymentMethods.collect { list ->
+                if (_selectedPaymentMethod.value == null && list.isNotEmpty()) {
+                    _selectedPaymentMethod.value = list.find { it.isDefault } ?: list.first()
+                }
+            }
+        }
+    }
+
+    // Payment Gateway management operations
+    fun selectPaymentMethod(method: LinkedPaymentMethod) {
+        _selectedPaymentMethod.value = method
+    }
+
+    fun setDefaultPaymentMethod(id: Int) {
+        viewModelScope.launch {
+            repository.setDefaultPaymentMethod(id)
+        }
+    }
+
+    fun removePaymentMethod(id: Int) {
+        viewModelScope.launch {
+            repository.deletePaymentMethod(id)
+            if (_selectedPaymentMethod.value?.id == id) {
+                _selectedPaymentMethod.value = allPaymentMethods.value.firstOrNull { it.id != id }
+            }
+        }
+    }
+
+    fun linkCreditCard(
+        cardNumber: String,
+        expiry: String,
+        cvv: String,
+        cardHolder: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val result = paymentGateway.tokenizeAndLinkCard(cardNumber, expiry, cvv, cardHolder)
+            result.onSuccess { method ->
+                repository.insertPaymentMethod(method)
+                _selectedPaymentMethod.value = method
+                onSuccess()
+            }.onFailure { err ->
+                onError(err.message ?: "Không thể liên kết thẻ")
+            }
+        }
+    }
+
+    fun linkDigitalWallet(
+        provider: String,
+        phoneNumber: String,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val result = paymentGateway.linkDigitalWallet(provider, phoneNumber)
+            result.onSuccess { method ->
+                repository.insertPaymentMethod(method)
+                _selectedPaymentMethod.value = method
+                onSuccess()
+            }.onFailure { err ->
+                onError(err.message ?: "Không thể liên kết ví")
+            }
+        }
     }
 
     // Wallet simulation
-    fun topUpWallet(amount: Double) {
+    fun topUpWallet(amount: Double, paymentMethodTitle: String = "Thẻ Visa / Stripe Gateway") {
         _walletBalance.value += amount
+        viewModelScope.launch {
+            repository.insertTransaction(
+                PaymentTransaction(
+                    transactionId = "TXN-TOP-${System.currentTimeMillis().toString().takeLast(6)}",
+                    title = "Nạp tiền ví GrabPay",
+                    amount = amount,
+                    paymentMethodTitle = paymentMethodTitle,
+                    status = "Thành công",
+                    serviceType = "TOPUP"
+                )
+            )
+        }
     }
 
     fun spendWallet(amount: Double): Boolean {
@@ -393,7 +529,20 @@ class GrabViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Step 3: Trip In Progress (ticks)
                 var tripProgress = 0f
-                spendWallet(current.price) // deduct from wallet
+                val activeMethod = _selectedPaymentMethod.value
+                    ?: allPaymentMethods.value.firstOrNull { it.isDefault }
+                    ?: allPaymentMethods.value.firstOrNull()
+
+                if (activeMethod != null) {
+                    if (activeMethod.provider == "GRABPAY") {
+                        spendWallet(current.price)
+                    }
+                    val txnTitle = "Chuyến đi ${current.selectedVehicle.name}"
+                    val chargeRes = paymentGateway.charge(current.price, activeMethod, txnTitle, "RIDE")
+                    chargeRes.onSuccess { txn ->
+                        repository.insertTransaction(txn)
+                    }
+                }
                 while (tripProgress < 1.0f) {
                     _rideState.value = RideState.TripInProgress(
                         pickup = current.pickup,
@@ -496,7 +645,20 @@ class GrabViewModel(application: Application) : AndroidViewModel(application) {
 
             // Step 2: Delivering
             var progress = 0.0f
-            spendWallet(totalPrice) // deduct from balance
+            val activeMethod = _selectedPaymentMethod.value
+                ?: allPaymentMethods.value.firstOrNull { it.isDefault }
+                ?: allPaymentMethods.value.firstOrNull()
+
+            if (activeMethod != null) {
+                if (activeMethod.provider == "GRABPAY") {
+                    spendWallet(totalPrice)
+                }
+                val txnTitle = "Đơn món ăn: $restaurantName"
+                val chargeRes = paymentGateway.charge(totalPrice, activeMethod, txnTitle, "FOOD")
+                chargeRes.onSuccess { txn ->
+                    repository.insertTransaction(txn)
+                }
+            }
             while (progress <= 1.0f) {
                 _foodState.value = FoodState.Delivering(
                     restaurantName = restaurantName,

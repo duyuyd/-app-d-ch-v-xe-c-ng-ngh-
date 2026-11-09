@@ -26,4 +26,30 @@ class ExampleUnitTest {
     assertEquals(105.8542, loc.longitude, 0.0001)
     assertEquals("Hà Nội, Việt Nam", loc.address)
   }
+
+  @Test
+  fun testCardBrandDetection() {
+    val visaBrand = com.example.data.PaymentGatewayManager.detectCardBrand("4111111111111111")
+    assertEquals(com.example.data.CardBrand.VISA, visaBrand)
+
+    val mcBrand = com.example.data.PaymentGatewayManager.detectCardBrand("5100000000000000")
+    assertEquals(com.example.data.CardBrand.MASTERCARD, mcBrand)
+
+    val jcbBrand = com.example.data.PaymentGatewayManager.detectCardBrand("3528000000000000")
+    assertEquals(com.example.data.CardBrand.JCB, jcbBrand)
+  }
+
+  @Test
+  fun testDigitalWalletLinking() {
+    val result = com.example.data.PaymentGatewayManager.linkDigitalWallet(
+      walletType = "MOMO",
+      phoneNumber = "0987654321",
+      accountName = "Nguyen Van A"
+    )
+    assertTrue(result.isSuccess)
+    val method = result.getOrNull()
+    assertNotNull(method)
+    assertEquals("Ví MoMo", method?.title)
+    assertEquals("0987654321", method?.lastFour)
+  }
 }

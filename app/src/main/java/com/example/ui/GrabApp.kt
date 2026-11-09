@@ -129,6 +129,14 @@ fun GrabApp(viewModel: GrabViewModel) {
                     label = { Text("Lịch sử", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
                     colors = NavigationBarItemDefaults.colors(selectedIconColor = GrabGreen, selectedTextColor = GrabGreen)
                 )
+
+                NavigationBarItem(
+                    selected = currentRoute == "payment",
+                    onClick = { navController.navigate("payment") },
+                    icon = { Icon(Icons.Filled.AccountBalanceWallet, contentDescription = "Thanh toán") },
+                    label = { Text("Thanh toán", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                    colors = NavigationBarItemDefaults.colors(selectedIconColor = GrabGreen, selectedTextColor = GrabGreen)
+                )
             }
         }
     ) { innerPadding ->
@@ -151,6 +159,9 @@ fun GrabApp(viewModel: GrabViewModel) {
             }
             composable("history") {
                 HistoryScreen(viewModel)
+            }
+            composable("payment") {
+                PaymentManagementScreen(viewModel, navController)
             }
         }
     }
@@ -241,6 +252,7 @@ fun HomeScreen(viewModel: GrabViewModel, navController: NavController) {
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clickable { navController.navigate("payment") }
                             .testTag("wallet_card"),
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(containerColor = Color.White),
@@ -255,7 +267,7 @@ fun HomeScreen(viewModel: GrabViewModel, navController: NavController) {
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    Icons.Filled.Wallet,
+                                    Icons.Filled.AccountBalanceWallet,
                                     contentDescription = "Wallet",
                                     tint = GrabGreen,
                                     modifier = Modifier.size(28.dp)
@@ -263,7 +275,7 @@ fun HomeScreen(viewModel: GrabViewModel, navController: NavController) {
                                 Spacer(modifier = Modifier.width(12.dp))
                                 Column {
                                     Text(
-                                        text = "Ví GrabPay",
+                                        text = "Ví GrabPay & Thẻ",
                                         fontSize = 12.sp,
                                         color = TextSecondaryLight
                                     )
@@ -277,21 +289,21 @@ fun HomeScreen(viewModel: GrabViewModel, navController: NavController) {
                             }
 
                             Button(
-                                onClick = { viewModel.topUpWallet(50000.0) },
+                                onClick = { navController.navigate("payment") },
                                 colors = ButtonDefaults.buttonColors(containerColor = GrabGreenLight),
                                 contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
-                                        Icons.Filled.Add,
-                                        contentDescription = "Nạp ví",
+                                        Icons.Filled.CreditCard,
+                                        contentDescription = "Ví & Thẻ",
                                         tint = GrabGreenDark,
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
-                                        text = "Nạp 50k",
+                                        text = "Quản lý ví",
                                         color = GrabGreenDark,
                                         fontSize = 12.sp,
                                         fontWeight = FontWeight.Bold
@@ -1217,7 +1229,14 @@ fun BookingScreen(viewModel: GrabViewModel, navController: NavController) {
                                     }
                                 }
 
-                                Spacer(modifier = Modifier.height(12.dp))
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                PaymentMethodSelector(
+                                    viewModel = viewModel,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+
+                                Spacer(modifier = Modifier.height(10.dp))
 
                                 Button(
                                     onClick = { viewModel.startRideBooking() },
@@ -2275,35 +2294,12 @@ fun CartScreen(viewModel: GrabViewModel, navController: NavController) {
                         }
                     }
 
-                    // Payment mechanism selection row
+                    // Payment mechanism selection
                     item {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = Color.White)
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Filled.Wallet, "GrabPay", tint = GrabGreen)
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Column {
-                                        Text("Ví điện tử GrabPay", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                        Text("Số dư khả dụng: " + formatVnd(walletBal), fontSize = 10.sp, color = TextSecondaryLight)
-                                    }
-                                }
-
-                                if (walletBal < checkoutTotal) {
-                                    Text("Số dư không đủ!", color = Color.Red, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                } else {
-                                    Text("Được chọn ✓", color = GrabGreenDark, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
+                        PaymentMethodSelector(
+                            viewModel = viewModel,
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 }
 
@@ -2313,7 +2309,9 @@ fun CartScreen(viewModel: GrabViewModel, navController: NavController) {
                         .fillMaxWidth()
                         .padding(16.dp)
                 ) {
-                    val balanceSufficient = walletBal >= checkoutTotal
+                    val selectedMethod by viewModel.selectedPaymentMethod.collectAsStateWithLifecycle()
+                    val isGrabPay = selectedMethod?.provider == "GRABPAY"
+                    val balanceSufficient = !isGrabPay || walletBal >= checkoutTotal
                     Button(
                         onClick = {
                             if (balanceSufficient) {
